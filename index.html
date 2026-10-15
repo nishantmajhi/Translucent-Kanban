@@ -1,0 +1,3341 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>Translucent Kanban</title>
+    <meta
+      name="description"
+      content="A secure, beautiful kanban board with end-to-end encryption"
+    />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#06061a"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#edf2ff"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="Translucent" />
+
+    <!-- Google Fonts: Josefin Sans for elegant geometric character -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Josefin+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async></script>
+
+    <!-- React 18 and Babel, pinned to an exact version with a subresource
+         integrity hash.
+
+         The premise of this application is that notes are encrypted before
+         they leave the browser. A substituted script on any of these would run
+         with full access to the page and could read the passphrase before
+         encryption ever happens, so "the CDN is trustworthy" is a load-bearing
+         assumption and worth removing. With integrity set, the browser refuses
+         a file whose hash does not match rather than running it.
+
+         The version has to be exact for that to work: "react@18" resolves to
+         whatever the latest 18.x is, and a patch release would break the hash
+         and the page with it. These are the versions "@18" and "@latest"
+         resolved to on 2026-09-05.
+
+         accounts.google.com/gsi/client above is deliberately left unpinned —
+         Google ships it unversioned and expects to update it, so a hash would
+         break sign-in at a time of their choosing rather than ours. It is the
+         one exception, not the rule. -->
+    <script
+      src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+      integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+      integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://unpkg.com/@babel/standalone@8.0.4/babel.min.js"
+      integrity="sha384-bdF7m0Y1IFKt9Q6xC8X9qkXn0OBriQWKyWwZKYsN05zF6P/g9OakjjL0G2Sd4pB4"
+      crossorigin="anonymous"
+    ></script>
+
+    <!-- The crypto engine and the board rules. Plain scripts rather than
+         modules so they are available to the text/babel block below, which
+         is not one. -->
+    <script src="./src/crypto.js"></script>
+    <script src="./src/board.js"></script>
+
+    <style>
+      /* ─── Reset ─────────────────────────────────────────── */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      /* ─── Design Tokens ────────────────────────────────── */
+      :root {
+        --font: "Josefin Sans", sans-serif;
+
+        /* Background */
+        --bg: #edf2ff;
+        --blob-a: #c5d5fd;
+        --blob-b: #dce7ff;
+        --blob-c: #e4edfc;
+
+        /* Glass surfaces */
+        --g-bg: rgba(255, 255, 255, 0.52);
+        --g-bg-h: rgba(255, 255, 255, 0.68);
+        --g-border: rgba(255, 255, 255, 0.82);
+        --g-shadow: 0 8px 32px rgba(31, 40, 135, 0.09);
+        --g-blur: blur(22px) saturate(180%);
+
+        /* Hover glow (light = soft shadow impression) */
+        --glow: rgba(30, 40, 160, 0.055);
+
+        /* Inner light shimmer */
+        --shimmer: rgba(255, 255, 255, 0.22);
+
+        /* Text */
+        --tx: #16164a;
+        --tx-2: #4848a0;
+        --tx-m: #5c5caa; /* was #8888cc - 2.9:1 fail → now 5.25:1 ✓ */
+
+        /* Accent */
+        --ac: #4a6cf7;
+        --ac-l: rgba(74, 108, 247, 0.14);
+        --ac-glow: rgba(74, 108, 247, 0.38);
+
+        /* State colours */
+        --red: #e04848;
+        --green: #40b07a;
+        --yellow: #d0a020;
+
+        /* Shape */
+        --r: 20px;
+        --r-sm: 13px;
+        --r-xs: 8px;
+
+        /* Motion */
+        --ease: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #06061a;
+          --blob-a: #0c0c38;
+          --blob-b: #090930;
+          --blob-c: #0f1040;
+
+          --g-bg: rgba(255, 255, 255, 0.1);
+          --g-bg-h: rgba(255, 255, 255, 0.15);
+          --g-border: rgba(255, 255, 255, 0.16);
+          --g-shadow: 0 8px 32px rgba(0, 0, 0, 0.44);
+
+          /* Dark hover = soft light bloom */
+          --glow: rgba(140, 175, 255, 0.11);
+          --shimmer: rgba(255, 255, 255, 0.07);
+
+          --tx: #e6e8ff;
+          --tx-2: #9494d4;
+          --tx-m: #7878b8; /* was #5555a8 - 3.35:1 fail → now 4.90:1 ✓ */
+
+          --ac: #5a80f5; /* was #7a9ef9 - noticeably dimmer */
+          --ac-l: rgba(90, 128, 245, 0.14);
+          --ac-glow: rgba(90, 128, 245, 0.3); /* was 0.4 - softer halo */
+
+          --red: #f07070;
+          --green: #5dd49a;
+          --yellow: #f0c040;
+        }
+      }
+
+      /* ─── Base ──────────────────────────────────────────── */
+      html,
+      body {
+        height: 100%;
+        background: var(--bg);
+        overflow: hidden;
+      }
+      body {
+        font-family: var(--font);
+        color: var(--tx);
+        font-size: 16px;
+        -webkit-font-smoothing: antialiased;
+      }
+      #root {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      button {
+        font-family: var(--font);
+        cursor: pointer;
+      }
+      input,
+      textarea,
+      select {
+        font-family: var(--font);
+      }
+      * {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      /* ─── Animated Background ───────────────────────────── */
+      .bg {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        background: var(--bg);
+        overflow: hidden;
+      }
+      .blob {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(88px);
+        opacity: 0.72;
+      }
+      .blob-a {
+        width: 660px;
+        height: 660px;
+        background: var(--blob-a);
+        top: -180px;
+        left: -140px;
+        animation: float-a 28s ease-in-out infinite alternate;
+      }
+      .blob-b {
+        width: 520px;
+        height: 520px;
+        background: var(--blob-b);
+        bottom: -120px;
+        right: -100px;
+        animation: float-b 22s ease-in-out infinite alternate;
+      }
+      .blob-c {
+        width: 420px;
+        height: 420px;
+        background: var(--blob-c);
+        top: 38%;
+        left: 32%;
+        animation: float-c 18s ease-in-out infinite alternate;
+      }
+      @keyframes float-a {
+        0% {
+          transform: translate(0, 0) scale(1);
+        }
+        50% {
+          transform: translate(40px, -50px) scale(1.06);
+        }
+        100% {
+          transform: translate(-20px, 30px) scale(0.96);
+        }
+      }
+      @keyframes float-b {
+        0% {
+          transform: translate(0, 0) scale(1);
+        }
+        50% {
+          transform: translate(-30px, 40px) scale(1.04);
+        }
+        100% {
+          transform: translate(30px, -20px) scale(0.97);
+        }
+      }
+      @keyframes float-c {
+        0% {
+          transform: translate(0, 0) scale(1);
+        }
+        100% {
+          transform: translate(-40px, 60px) scale(1.08);
+        }
+      }
+
+      /* ─── Glass Base Component ──────────────────────────── */
+      .g {
+        background: var(--g-bg);
+        backdrop-filter: var(--g-blur);
+        -webkit-backdrop-filter: var(--g-blur);
+        border: 1px solid var(--g-border);
+        box-shadow: var(--g-shadow);
+        border-radius: var(--r);
+        position: relative;
+        overflow: hidden;
+        transition:
+          background var(--ease),
+          box-shadow var(--ease);
+      }
+      /* Inner top-left light shimmer (real glass refraction) */
+      .g::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, var(--shimmer) 0%, transparent 45%);
+        pointer-events: none;
+        border-radius: inherit;
+        z-index: 0;
+      }
+      /* Mouse-tracking glow via CSS custom props */
+      .g::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(
+          circle at var(--mx, 50%) var(--my, 50%),
+          var(--glow) 0%,
+          transparent 12%
+        );
+        opacity: var(--gop, 0);
+        transition: opacity 280ms ease;
+        pointer-events: none;
+        border-radius: inherit;
+        z-index: 1;
+      }
+      .g:hover::after {
+        --gop: 1;
+      }
+      .g.touched::after {
+        --gop: 1;
+      }
+      .g > * {
+        position: relative;
+        z-index: 2;
+      }
+
+      /* ─── Layout ────────────────────────────────────────── */
+      .layout {
+        position: relative;
+        z-index: 1;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        max-width: 1240px;
+        margin: 0 auto;
+        width: 100%;
+        padding: 0 14px;
+      }
+
+      /* ─── Scroll Area ───────────────────────────────────── */
+      .scroll {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        scrollbar-width: thin;
+        scrollbar-color: var(--g-border) transparent;
+      }
+      .scroll::-webkit-scrollbar {
+        width: 4px;
+      }
+      .scroll::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .scroll::-webkit-scrollbar-thumb {
+        background: var(--g-border);
+        border-radius: 2px;
+      }
+
+      /* ─── Transparent glass variant (border only, no fill) ── */
+      .g.bare {
+        background: transparent !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+      }
+      .g.bare::before {
+        display: none;
+      }
+      .g.bare::after {
+        display: none;
+      }
+
+      /* ─── Header ────────────────────────────────────────── */
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px;
+        margin: 10px 0 8px;
+        overflow: visible !important; /* allow dropdown to escape card clipping */
+      }
+      .logo {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: -0.2px;
+        color: var(--tx);
+        white-space: nowrap;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        line-height: 1;
+      }
+      .logo-star {
+        color: var(--ac);
+        font-size: 15px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+      }
+      .logo em {
+        font-style: normal;
+        color: var(--ac);
+      }
+
+      /* Inline search inside header */
+      .hsearch {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        border-left: 1px solid var(--g-border);
+        border-right: 1px solid var(--g-border);
+        padding: 0 14px;
+        height: 100%;
+        cursor: text;
+      }
+      .hsi {
+        display: none;
+      }
+      .hsinput {
+        flex: 1;
+        background: none;
+        border: none;
+        outline: none;
+        font-size: 12px;
+        color: var(--tx);
+        text-align: right;
+      }
+      .hsinput::placeholder {
+        color: var(--tx-m);
+        text-align: right;
+      }
+      .hsclear {
+        background: none;
+        border: none;
+        color: var(--tx-m);
+        font-size: 11px;
+        transition: color var(--ease);
+        line-height: 1;
+        margin-left: 6px;
+        flex-shrink: 0;
+      }
+      .hsclear:hover {
+        color: var(--tx);
+      }
+
+      .hactions {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-shrink: 0;
+      }
+
+      .avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: 2px solid var(--g-border);
+        background: var(--ac-l);
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--ac);
+        cursor: pointer;
+        transition: border-color var(--ease);
+        flex-shrink: 0;
+      }
+      .avatar:hover {
+        border-color: var(--ac);
+      }
+      .avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .ibtn {
+        background: none;
+        border: none;
+        padding: 7px;
+        border-radius: var(--r-xs);
+        color: var(--tx-2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 17px;
+        transition:
+          color var(--ease),
+          background var(--ease);
+      }
+      .ibtn:hover {
+        color: var(--tx);
+        background: var(--ac-l);
+      }
+
+      .saving-badge {
+        font-size: 10px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--tx-m);
+        padding: 3px 8px;
+        border: 1px solid var(--g-border);
+        border-radius: 100px;
+        animation: pulse 1s ease infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      /* ─── Full-screen Overlay ───────────────────────────── */
+      .screen {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        overflow-y: auto;
+      }
+      .screen-card {
+        width: 100%;
+        max-width: 320px;
+        padding: 28px 22px;
+        text-align: center;
+        animation: pop-in 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        margin: auto;
+        background: transparent !important;
+        box-shadow: none !important;
+      }
+      .screen-card::before {
+        display: none;
+      }
+      @keyframes pop-in {
+        from {
+          opacity: 0;
+          transform: scale(0.88) translateY(16px);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+      .sc-icon {
+        font-size: 34px;
+        margin-bottom: 12px;
+        display: block;
+        line-height: 1;
+      }
+      .sc-appicon {
+        width: 68px;
+        height: 68px;
+        border-radius: 18px;
+        margin: 0 auto 16px;
+        display: block;
+        box-shadow: 0 6px 24px rgba(74, 108, 247, 0.28);
+      }
+      .logo-icon {
+        width: 20px;
+        height: 20px;
+        border-radius: 5px;
+        display: block;
+        flex-shrink: 0;
+      }
+      .sc-title {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        margin-bottom: 6px;
+      }
+      .sc-sub {
+        font-size: 12px;
+        color: var(--tx-2);
+        line-height: 1.65;
+        margin-bottom: 20px;
+        letter-spacing: 0.02em;
+      }
+
+      /* ─── Buttons ───────────────────────────────────────── */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 26px;
+        border-radius: var(--r-sm);
+        border: none;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        transition: all var(--ease);
+      }
+      .btn-p {
+        background: var(--ac);
+        color: #fff;
+        box-shadow: 0 4px 22px var(--ac-glow);
+      }
+      /* Dark mode: keep btn-p solid accent - same as .nk.go */
+      @media (prefers-color-scheme: dark) {
+        .btn-p {
+          background: var(--ac);
+          color: #fff;
+          box-shadow: 0 4px 22px var(--ac-glow);
+          border: none;
+        }
+        .btn-p:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 28px var(--ac-glow);
+        }
+      }
+      .btn-p:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 28px var(--ac-glow);
+      }
+      .btn-p:active {
+        transform: none;
+      }
+      .btn-p:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .btn-ghost {
+        background: var(--g-bg);
+        backdrop-filter: var(--g-blur);
+        -webkit-backdrop-filter: var(--g-blur);
+        border: 1px solid var(--g-border);
+        color: var(--tx);
+      }
+      .btn-ghost:hover {
+        background: var(--g-bg-h);
+      }
+      .btn-danger {
+        background: var(--red);
+        color: #fff;
+      }
+      .btn-full {
+        width: 100%;
+      }
+
+      /* ─── Warning Banner ────────────────────────────────── */
+      .warn-box {
+        background: rgba(224, 72, 72, 0.08);
+        border: 1px solid var(--red);
+        border-radius: var(--r-sm);
+        padding: 12px 14px;
+        margin-bottom: 18px;
+        font-size: 12px;
+        color: var(--red);
+        text-align: left;
+        line-height: 1.65;
+      }
+      .warn-box code {
+        background: rgba(224, 72, 72, 0.12);
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-family: monospace;
+      }
+
+      /* ─── PIN Display ───────────────────────────────────── */
+      .pin-dots {
+        display: flex;
+        justify-content: center;
+        gap: 11px;
+        margin-bottom: 18px;
+      }
+      .dot {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        border: 2px solid var(--tx-m);
+        transition: all 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      }
+      .dot.on {
+        background: var(--ac);
+        border-color: var(--ac);
+        transform: scale(1.2);
+        box-shadow: 0 0 14px var(--ac-glow);
+      }
+      .dot.err {
+        background: var(--red);
+        border-color: var(--red);
+        animation: shake 380ms ease;
+      }
+      @keyframes shake {
+        0%,
+        100% {
+          transform: translateX(0);
+        }
+        20% {
+          transform: translateX(-7px);
+        }
+        40% {
+          transform: translateX(7px);
+        }
+        60% {
+          transform: translateX(-4px);
+        }
+        80% {
+          transform: translateX(4px);
+        }
+      }
+
+      /* ─── Numpad ────────────────────────────────────────── */
+      .numpad {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 5px;
+        margin-bottom: 10px;
+        max-width: 180px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+      .nk {
+        height: 46px;
+        border-radius: var(--r-xs);
+        border: 1px solid var(--g-border);
+        background: var(--g-bg);
+        backdrop-filter: var(--g-blur);
+        -webkit-backdrop-filter: var(--g-blur);
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--tx);
+        transition: all var(--ease);
+        position: relative;
+        overflow: hidden;
+      }
+      .nk::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(
+          circle at var(--mx, 50%) var(--my, 50%),
+          var(--glow) 0%,
+          transparent 14%
+        );
+        opacity: var(--gop, 0);
+        transition: opacity 200ms;
+        pointer-events: none;
+      }
+      .nk:hover::after {
+        --gop: 1;
+      }
+      .nk:hover {
+        background: var(--g-bg-h);
+        transform: scale(1.03);
+      }
+      .nk:active {
+        transform: scale(0.95);
+      }
+      .nk.spc {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--tx-2);
+      }
+      .nk.go {
+        background: var(--ac);
+        color: #fff;
+        border-color: transparent;
+        font-size: 14px;
+        box-shadow: 0 3px 16px var(--ac-glow);
+      }
+      .nk.go:hover {
+        transform: scale(1.04);
+        box-shadow: 0 6px 22px var(--ac-glow);
+      }
+      .nk:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .pin-error {
+        color: var(--red);
+        font-size: 13px;
+        margin-top: 6px;
+        letter-spacing: 0.02em;
+      }
+      .forgot-btn {
+        background: none;
+        border: none;
+        color: var(--tx-m);
+        font-size: 12px;
+        margin-top: 18px;
+        letter-spacing: 0.03em;
+        transition: color var(--ease);
+      }
+      .forgot-btn:hover {
+        color: var(--tx-2);
+      }
+
+      /* ─── Stats ─────────────────────────────────────────── */
+      .statsbar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 9px 16px;
+        margin-bottom: 8px;
+      }
+      .stat {
+        font-size: 12px;
+        color: var(--tx-m);
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .stat strong {
+        color: var(--tx);
+        font-weight: 600;
+      }
+      .progbar {
+        flex: 1;
+        height: 4px;
+        background: var(--g-border);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .progfill {
+        height: 100%;
+        background: var(--ac);
+        border-radius: 2px;
+        transition: width 500ms cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      /* ─── Filter Tabs ───────────────────────────────────── */
+      .ftabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 2px 2px 10px;
+        align-items: center;
+      }
+      .ftab {
+        padding: 5px 14px;
+        border-radius: 100px;
+        border: 1px solid var(--g-border);
+        background: transparent;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--tx-m);
+        transition: all var(--ease);
+      }
+      .ftab.on {
+        background: rgba(255, 255, 255, 0.07);
+        color: var(--tx-2);
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+      @media (prefers-color-scheme: light) {
+        .ftab.on {
+          background: rgba(30, 40, 160, 0.07);
+          color: var(--tx-2);
+          border-color: rgba(30, 40, 160, 0.22);
+        }
+      }
+      .ftab.del {
+        margin-left: auto;
+        color: var(--red);
+        border-color: rgba(224, 72, 72, 0.28);
+      }
+      .ftab.del:hover {
+        background: rgba(224, 72, 72, 0.1);
+      }
+
+      /* ─── Board ─────────────────────────────────────────── */
+      .board {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: minmax(0, 1fr);
+        gap: 12px;
+      }
+      .col {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        border: 1px solid var(--g-border);
+        border-radius: var(--r);
+        transition:
+          background var(--ease),
+          border-color var(--ease);
+      }
+      .col.over {
+        background: var(--ac-l);
+        border-color: var(--ac);
+      }
+      .colhead {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px 10px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--tx-2);
+      }
+      .coldot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .coldot.assigned {
+        background: var(--ac);
+      }
+      .coldot.completed {
+        background: var(--yellow);
+      }
+      .coldot.submitted {
+        background: var(--green);
+      }
+      .colcount {
+        margin-left: auto;
+        color: var(--tx-m);
+      }
+      .colbody {
+        padding: 0 8px 4px;
+      }
+      .colempty {
+        padding: 22px 8px;
+        text-align: center;
+        font-size: 12px;
+        color: var(--tx-m);
+      }
+
+      /* ─── Task Card ─────────────────────────────────────── */
+      .task {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+        margin-bottom: 8px;
+        cursor: grab;
+        transition: all var(--ease);
+        animation: slidein 200ms ease both;
+      }
+      .task.dragging {
+        opacity: 0.4;
+      }
+      @keyframes slidein {
+        from {
+          opacity: 0;
+          transform: translateY(-7px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .tbody {
+        flex: 1;
+        min-width: 0;
+      }
+      .ttext {
+        font-size: 14px;
+        font-weight: 400;
+        color: var(--tx);
+        line-height: 1.55;
+        word-break: break-word;
+        transition: all var(--ease);
+      }
+      .tmeta {
+        display: flex;
+        gap: 5px;
+        margin-top: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .ptag {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 2px 7px;
+        border-radius: 100px;
+        border: 1px solid;
+      }
+      .p-high {
+        color: var(--red);
+        border-color: var(--red);
+        background: rgba(224, 72, 72, 0.09);
+      }
+      .p-medium {
+        color: var(--yellow);
+        border-color: var(--yellow);
+        background: rgba(208, 128, 48, 0.09);
+      }
+      .p-low {
+        color: var(--green);
+        border-color: var(--green);
+        background: rgba(64, 176, 122, 0.09);
+      }
+
+      /* Assignee chip, and the input that replaces it while editing */
+      .atag,
+      .aedit {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 9px;
+        border-radius: 100px;
+        border: 1px solid var(--g-border);
+        background: transparent;
+        color: var(--tx-2);
+        line-height: 1.4;
+      }
+      .atag {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        transition: all var(--ease);
+      }
+      .atag:hover {
+        border-color: var(--ac);
+        color: var(--ac);
+      }
+      .atag.none {
+        color: var(--tx-m);
+        border-style: dashed;
+      }
+      .aedit {
+        width: 140px;
+        outline: none;
+        border-color: var(--ac);
+        color: var(--tx);
+      }
+
+      .tactions {
+        display: flex;
+        gap: 2px;
+        opacity: 0;
+        transition: opacity var(--ease);
+        flex-shrink: 0;
+        align-items: center;
+      }
+      .task:hover .tactions {
+        opacity: 1;
+      }
+      @media (hover: none) {
+        .tactions {
+          opacity: 1;
+        }
+      }
+      .tact {
+        background: none;
+        border: none;
+        padding: 4px 6px;
+        border-radius: 6px;
+        color: var(--tx-m);
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        transition: all var(--ease);
+      }
+      .tact:hover {
+        color: var(--red);
+        background: rgba(224, 72, 72, 0.1);
+      }
+      .tact.mv:hover {
+        color: var(--ac);
+        background: var(--ac-l);
+      }
+
+      /* One column under another on a phone, scrolling as one page */
+      @media (max-width: 760px) {
+        .board {
+          grid-template-columns: 1fr;
+          grid-template-rows: none;
+          align-content: start;
+          overflow-y: auto;
+        }
+        .board .colbody {
+          overflow-y: visible;
+        }
+      }
+
+      /* ─── Add Task ──────────────────────────────────────── */
+      .addarea {
+        padding: 6px 0 14px;
+      }
+      .addform {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        padding: 12px 16px;
+      }
+      .addinwrap {
+        flex: 1;
+      }
+      .addin {
+        width: 100%;
+        background: none;
+        border: none;
+        outline: none;
+        font-size: 14px;
+        color: var(--tx);
+        line-height: 1.5;
+        resize: none;
+        min-height: 22px;
+        overflow: hidden;
+      }
+      .addin::placeholder {
+        color: var(--tx-m);
+      }
+      .addopts {
+        display: flex;
+        gap: 5px;
+        margin-top: 7px;
+        flex-wrap: wrap;
+      }
+      .pbtn {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 3px 9px;
+        border-radius: 100px;
+        border: 1px solid var(--g-border);
+        background: transparent;
+        color: var(--tx-m);
+        transition: all var(--ease);
+      }
+      .pbtn.on-high {
+        color: var(--red);
+        border-color: var(--red);
+        background: rgba(224, 72, 72, 0.09);
+      }
+      .pbtn.on-medium {
+        color: var(--yellow);
+        border-color: var(--yellow);
+        background: rgba(208, 128, 48, 0.09);
+      }
+      .pbtn.on-low {
+        color: var(--green);
+        border-color: var(--green);
+        background: rgba(64, 176, 122, 0.09);
+      }
+
+      .addwho {
+        border-color: var(--g-border);
+        width: 150px;
+      }
+      .addwho:focus {
+        border-color: var(--ac);
+      }
+      .addwho::placeholder,
+      .aedit::placeholder {
+        color: var(--tx-m);
+      }
+
+      .addbtn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: var(--ac);
+        border: none;
+        color: #fff;
+        font-size: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition: all var(--ease);
+        box-shadow: 0 3px 16px var(--ac-glow);
+      }
+      .addbtn:hover {
+        transform: scale(1.1) rotate(3deg);
+      }
+      .addbtn:active {
+        transform: scale(0.93);
+      }
+      .addbtn:disabled {
+        opacity: 0.38;
+        transform: none;
+        cursor: not-allowed;
+      }
+
+      /* ─── Settings Overlay ──────────────────────────────── */
+      .soverlay {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        background: rgba(0, 0, 5, 0.3);
+        backdrop-filter: blur(6px);
+        display: flex;
+        align-items: flex-end;
+        padding: 14px;
+        animation: fadefrom 200ms ease;
+      }
+      @keyframes fadefrom {
+        from {
+          opacity: 0;
+        }
+      }
+      .spanel {
+        width: 100%;
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 26px 22px 34px;
+        border-radius: var(--r) var(--r) var(--r-sm) var(--r-sm);
+        animation: slideup 300ms cubic-bezier(0.4, 0, 0.2, 1);
+        max-height: 82vh;
+        overflow-y: auto;
+      }
+      @keyframes slideup {
+        from {
+          transform: translateY(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+      .stitle {
+        font-size: 19px;
+        font-weight: 700;
+        margin-bottom: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .sgroup {
+        margin-bottom: 22px;
+      }
+      .sglabel {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--tx-m);
+        margin-bottom: 10px;
+      }
+      .srow {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 11px 14px;
+        border-radius: var(--r-sm);
+        background: var(--g-bg);
+        border: 1px solid var(--g-border);
+        margin-bottom: 7px;
+        transition: background var(--ease);
+      }
+      .srow.clickable {
+        cursor: pointer;
+      }
+      .srow.clickable:hover {
+        background: var(--g-bg-h);
+      }
+      .srow-l {
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .srow-d {
+        font-size: 11px;
+        color: var(--tx-m);
+        margin-top: 2px;
+      }
+
+      /* Toggle */
+      .tog {
+        width: 42px;
+        height: 23px;
+        border-radius: 12px;
+        background: var(--tx-m);
+        position: relative;
+        cursor: pointer;
+        transition: background var(--ease);
+        flex-shrink: 0;
+        border: none;
+      }
+      .tog.on {
+        background: var(--ac);
+      }
+      .tog::after {
+        content: "";
+        position: absolute;
+        width: 17px;
+        height: 17px;
+        border-radius: 50%;
+        background: #fff;
+        top: 3px;
+        left: 3px;
+        transition: transform var(--ease);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+      }
+      .tog.on::after {
+        transform: translateX(19px);
+      }
+
+      /* ─── Custom Glass Select ───────────────────────────── */
+      .glass-sel-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--g-bg);
+        border: 1px solid var(--g-border);
+        border-radius: var(--r-xs);
+        color: var(--tx);
+        font-size: 12px;
+        font-family: var(--font);
+        font-weight: 500;
+        padding: 5px 9px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition:
+          background var(--ease),
+          border-color var(--ease);
+        backdrop-filter: var(--g-blur);
+        -webkit-backdrop-filter: var(--g-blur);
+      }
+      .glass-sel-btn:hover {
+        background: var(--g-bg-h);
+        border-color: var(--ac);
+      }
+      .glass-sel-caret {
+        font-size: 9px;
+        color: var(--tx-m);
+        transition: transform var(--ease);
+        line-height: 1;
+      }
+      .glass-sel-btn.open .glass-sel-caret {
+        transform: rotate(180deg);
+      }
+      .glass-sel-menu {
+        position: fixed;
+        min-width: 140px;
+        padding: 5px;
+        z-index: 500;
+        animation: pop-in 160ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        overflow: hidden;
+      }
+      .glass-sel-opt {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 8px 11px;
+        border-radius: var(--r-xs);
+        border: none;
+        background: none;
+        color: var(--tx-2);
+        font-size: 12px;
+        font-family: var(--font);
+        font-weight: 500;
+        cursor: pointer;
+        transition:
+          background var(--ease),
+          color var(--ease);
+        letter-spacing: 0.01em;
+      }
+      .glass-sel-opt:hover {
+        background: var(--g-bg-h);
+        color: var(--tx);
+      }
+      .glass-sel-opt.sel-active {
+        color: var(--ac);
+        background: var(--ac-l);
+      }
+      /* ─── Confirm Dialog ────────────────────────────────── */
+      .confirm-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 999;
+        background: rgba(0, 0, 5, 0.52);
+        backdrop-filter: blur(5px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        animation: fadefrom 150ms ease;
+      }
+      .confirm-card {
+        width: 100%;
+        max-width: 310px;
+        padding: 24px 22px 20px;
+        animation: pop-in 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      }
+      .confirm-title {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: -0.2px;
+        color: var(--tx);
+        margin-bottom: 7px;
+      }
+      .confirm-body {
+        font-size: 13px;
+        color: var(--tx-2);
+        line-height: 1.65;
+        margin-bottom: 22px;
+      }
+      .confirm-btns {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      .confirm-btns .btn {
+        padding: 9px 20px;
+        font-size: 12px;
+      }
+
+      .sarrow {
+        color: var(--tx-m);
+        font-size: 14px;
+      }
+
+      /* ─── Toast ─────────────────────────────────────────── */
+      .toasts {
+        position: fixed;
+        top: 22px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        align-items: center;
+        pointer-events: none;
+      }
+      .toast {
+        padding: 10px 18px;
+        border-radius: 100px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        animation:
+          tin 280ms ease,
+          tout 280ms ease 2720ms both;
+        white-space: nowrap;
+      }
+      @keyframes tin {
+        from {
+          opacity: 0;
+          transform: translateY(-10px) scale(0.9);
+        }
+      }
+      @keyframes tout {
+        to {
+          opacity: 0;
+          transform: translateY(-6px) scale(0.92);
+        }
+      }
+
+      /* ─── Loading ───────────────────────────────────────── */
+      .spinner {
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        border: 3px solid var(--g-border);
+        border-top-color: var(--ac);
+        animation: spin 750ms linear infinite;
+        margin: 0 auto 14px;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* ─── Responsive ────────────────────────────────────── */
+      @media (max-width: 480px) {
+        .screen-card {
+          padding: 22px 16px;
+        }
+        .nk {
+          height: 42px;
+          font-size: 13px;
+        }
+        .sc-title {
+          font-size: 20px;
+        }
+        .numpad {
+          max-width: 165px;
+        }
+      }
+
+      /* ─── User Menu Dropdown ────────────────────────────── */
+      .umenu-wrap {
+        position: relative;
+      }
+      .umenu {
+        position: fixed;
+        top: 64px;
+        right: 14px;
+        width: 230px;
+        z-index: 25;
+        padding: 6px;
+        animation: pop-in 200ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      }
+      /* On wider viewports, align with the layout panel */
+      @media (min-width: 708px) {
+        .umenu {
+          right: calc((100vw - 680px) / 2 + 14px);
+        }
+      }
+      .umenu-user {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 10px 12px;
+        pointer-events: none;
+      }
+      .umenu-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: 1.5px solid var(--g-border);
+        overflow: hidden;
+        flex-shrink: 0;
+        background: var(--ac-l);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--ac);
+      }
+      .umenu-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .umenu-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--tx);
+        line-height: 1.3;
+      }
+      .umenu-email {
+        font-size: 10px;
+        color: var(--tx-m);
+        letter-spacing: 0.01em;
+        margin-top: 1px;
+      }
+      .umenu-sep {
+        height: 1px;
+        background: var(--g-border);
+        margin: 4px 6px;
+      }
+      .umenu-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        padding: 9px 10px;
+        border-radius: var(--r-xs);
+        background: none;
+        border: none;
+        color: var(--tx-2);
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        transition: all var(--ease);
+        text-decoration: none;
+        cursor: pointer;
+        pointer-events: auto;
+        position: relative;
+        z-index: 3;
+      }
+      .umenu-item:hover {
+        background: var(--g-bg-h);
+        color: var(--tx);
+      }
+      .umenu-item.danger {
+        color: var(--red);
+      }
+      .umenu-item.danger:hover {
+        background: rgba(224, 72, 72, 0.1);
+        color: var(--red);
+      }
+      .umenu-icon {
+        font-size: 14px;
+        width: 18px;
+        text-align: center;
+        flex-shrink: 0;
+      }
+
+      /* ─── Edit inline input ─────────────────────────────── */
+      .iedit {
+        background: none;
+        border: none;
+        outline: none;
+        font-size: 14px;
+        color: var(--tx);
+        width: 100%;
+        line-height: 1.55;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      /* ═══════════════════════════════════════════════════════════
+   TRANSLUCENT KANBAN - Secure Glass Kanban PWA
+   ═══════════════════════════════════════════════════════════
+
+   ⚙️  SETUP:
+   Place your downloaded Google OAuth JSON file (renamed to
+   client_config.json) in the same folder as this index.html.
+   The app reads the client_id from it automatically at startup.
+
+   ═══════════════════════════════════════════════════════════ */
+      const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+      const DATA_FILE = "translucent-kanban-v1.enc";
+      // Caches DATA_FILE's id and salt. Named after the file so that renaming
+      // the file also stops browsers reaching the old one by its cached id.
+      const META_KEY = "translucent-kanban-meta";
+
+      const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+      /* ─── Helpers ────────────────────────────────────────────── */
+      const uid = () =>
+        Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+      /* ─── Crypto Engine ──────────────────────────────────────
+         Lives in src/crypto.js so it can be tested; loaded as a plain
+         script above, which puts it on window as Crypt. ─────────── */
+
+      /* ─── Google Drive API ───────────────────────────────────── */
+      const Drive = {
+        async find(token) {
+          const r = await fetch(
+            `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name%3D'${DATA_FILE}'&fields=files(id)`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (!r.ok) throw new Error(`Drive ${r.status}`);
+          const d = await r.json();
+          return d.files?.[0] || null;
+        },
+        async read(token, id) {
+          const r = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${id}?alt=media`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (!r.ok) throw new Error(`Read ${r.status}`);
+          return r.json();
+        },
+        async write(token, payload, id = null) {
+          const meta = id
+            ? {}
+            : { name: DATA_FILE, parents: ["appDataFolder"] };
+          const form = new FormData();
+          form.append(
+            "metadata",
+            new Blob([JSON.stringify(meta)], { type: "application/json" }),
+          );
+          form.append(
+            "file",
+            new Blob([JSON.stringify(payload)], { type: "application/json" }),
+          );
+          const url = id
+            ? `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`
+            : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
+          const r = await fetch(url, {
+            method: id ? "PATCH" : "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            body: form,
+          });
+          if (!r.ok) throw new Error(`Write ${r.status}`);
+          return r.json();
+        },
+        async remove(token, id) {
+          await fetch(`https://www.googleapis.com/drive/v3/files/${id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        },
+      };
+
+      /* ─── Glow Hook (mouse/touch position tracking) ─────────── */
+      function useGlow(ref) {
+        useEffect(() => {
+          const el = ref.current;
+          if (!el) return;
+          const onMove = (e) => {
+            const r = el.getBoundingClientRect();
+            el.style.setProperty(
+              "--mx",
+              `${((e.clientX - r.left) / r.width) * 100}%`,
+            );
+            el.style.setProperty(
+              "--my",
+              `${((e.clientY - r.top) / r.height) * 100}%`,
+            );
+          };
+          const onTouch = (e) => {
+            const r = el.getBoundingClientRect();
+            const t = e.touches[0];
+            el.style.setProperty(
+              "--mx",
+              `${((t.clientX - r.left) / r.width) * 100}%`,
+            );
+            el.style.setProperty(
+              "--my",
+              `${((t.clientY - r.top) / r.height) * 100}%`,
+            );
+            el.classList.add("touched");
+            setTimeout(() => el.classList.remove("touched"), 600);
+          };
+          el.addEventListener("mousemove", onMove);
+          el.addEventListener("touchstart", onTouch, { passive: true });
+          return () => {
+            el.removeEventListener("mousemove", onMove);
+            el.removeEventListener("touchstart", onTouch);
+          };
+        }, []);
+      }
+
+      /* ─── Glass Card ─────────────────────────────────────────── */
+      function Glass({
+        tag = "div",
+        children,
+        className = "",
+        style = {},
+        onClick,
+      }) {
+        const ref = useRef();
+        useGlow(ref);
+        const Tag = tag;
+        return (
+          <Tag
+            ref={ref}
+            className={`g ${className}`}
+            style={style}
+            onClick={onClick}
+          >
+            {children}
+          </Tag>
+        );
+      }
+
+      /* ─── Animated Background ────────────────────────────────── */
+      const Background = () => (
+        <div className="bg">
+          <div className="blob blob-a" />
+          <div className="blob blob-b" />
+          <div className="blob blob-c" />
+        </div>
+      );
+
+      /* ─── Toast ──────────────────────────────────────────────── */
+      function Toasts({ list }) {
+        const cols = {
+          error: "var(--red)",
+          success: "var(--green)",
+          info: "var(--tx-2)",
+        };
+        return (
+          <div className="toasts">
+            {list.map((t) => (
+              <div
+                key={t.id}
+                className="g toast"
+                style={{ color: cols[t.type] || cols.info }}
+              >
+                {t.msg}
+              </div>
+            ))}
+          </div>
+        );
+      }
+
+      /* ─── Loading Screen ─────────────────────────────────────── */
+      function LoadingScreen() {
+        return (
+          <>
+            <Background />
+            <div
+              style={{
+                position: "relative",
+                zIndex: 1,
+                height: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <div style={{ textAlign: "center" }}>
+                <img
+                  src="icon-192.png"
+                  alt="Translucent"
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 14,
+                    marginBottom: 20,
+                    opacity: 0.88,
+                    display: "block",
+                    marginLeft: "auto",
+                    marginRight: "auto",
+                  }}
+                  onError={(e) => {
+                    e.target.style.display = "none";
+                  }}
+                />
+                <div className="spinner" />
+                <div
+                  style={{
+                    color: "var(--tx-m)",
+                    fontSize: "11px",
+                    letterSpacing: ".1em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Initializing
+                </div>
+              </div>
+            </div>
+          </>
+        );
+      }
+
+      /* ─── Auth Screen ────────────────────────────────────────── */
+      function AuthScreen({ onAuth, clientId }) {
+        const ref = useRef();
+        useGlow(ref);
+        const [busy, setBusy] = useState(false);
+        const [err, setErr] = useState("");
+        const needsSetup = !clientId;
+
+        const signIn = () => {
+          setBusy(true);
+          setErr("");
+          if (!window.google) {
+            setErr("Google Sign-In script not loaded yet. Try refreshing.");
+            setBusy(false);
+            return;
+          }
+          try {
+            const client = window.google.accounts.oauth2.initTokenClient({
+              client_id: clientId,
+              scope: `openid email profile ${DRIVE_SCOPE}`,
+              callback: async (resp) => {
+                if (resp.error) {
+                  setErr("Sign-in failed: " + resp.error);
+                  setBusy(false);
+                  return;
+                }
+                try {
+                  const ur = await fetch(
+                    "https://www.googleapis.com/oauth2/v3/userinfo",
+                    {
+                      headers: { Authorization: `Bearer ${resp.access_token}` },
+                    },
+                  );
+                  const u = await ur.json();
+                  onAuth({
+                    token: resp.access_token,
+                    expiresAt: Date.now() + resp.expires_in * 1000,
+                    user: { name: u.name, email: u.email, picture: u.picture },
+                  });
+                } catch {
+                  setErr("Could not fetch profile.");
+                  setBusy(false);
+                }
+              },
+            });
+            client.requestAccessToken({ prompt: "consent" });
+          } catch (e) {
+            setErr(e.message);
+            setBusy(false);
+          }
+        };
+
+        return (
+          <div className="screen">
+            <div ref={ref} className="g screen-card">
+              <img
+                src="icon-192.png"
+                alt="Translucent"
+                className="sc-appicon"
+                onError={(e) => {
+                  e.target.style.display = "none";
+                }}
+              />
+              <div className="sc-title">Translucent Kanban</div>
+              <div className="sc-sub">
+                Tasks that stay yours. Everything is encrypted
+                <br />
+                before it leaves your device.
+              </div>
+              {needsSetup && (
+                <div className="warn-box">
+                  ⚠ <strong>client_config.json not found.</strong>
+                  <br />
+                  Download your OAuth credentials JSON from Google Cloud Console
+                  and place it as <code>client_config.json</code> in the same
+                  folder as <code>index.html</code>, then refresh.
+                </div>
+              )}
+              {err && (
+                <div className="warn-box" style={{ marginBottom: 16 }}>
+                  {err}
+                </div>
+              )}
+              <button
+                className="btn btn-p btn-full"
+                onClick={signIn}
+                disabled={busy || needsSetup}
+              >
+                {busy ? "◌ Signing in…" : "Continue with Google"}
+              </button>
+              <p
+                style={{
+                  fontSize: "11px",
+                  color: "var(--tx-m)",
+                  marginTop: 14,
+                  lineHeight: 1.7,
+                }}
+              >
+                Stored in your Google Drive's private app folder.
+                <br />
+                No server. No telemetry. No exceptions.
+              </p>
+            </div>
+          </div>
+        );
+      }
+
+      /* ─── PIN Screen (setup / confirm / unlock) ──────────────── */
+      function PinScreen({ mode, onSubmit, onForgot }) {
+        const ref = useRef();
+        useGlow(ref);
+        const [pin, setPin] = useState("");
+        const [err, setErr] = useState(false);
+        const [busy, setBusy] = useState(false);
+        const PIN_LEN = 6;
+
+        const TITLES = {
+          setup: "Set Your PIN",
+          confirm: "Confirm PIN",
+          unlock: "Enter PIN",
+        };
+        const SUBS = {
+          setup:
+            "Choose a 4–6 digit PIN. It encrypts your tasks and is never stored anywhere.",
+          confirm: "Re-enter your PIN to confirm.",
+          unlock: "Enter your PIN to unlock.",
+        };
+
+        const submit = useCallback(
+          async (p) => {
+            if (p.length < 4 || busy) return;
+            setBusy(true);
+            setErr(false);
+            const ok = await onSubmit(p);
+            if (!ok) {
+              setErr(true);
+              setPin("");
+            }
+            setBusy(false);
+          },
+          [busy, onSubmit],
+        );
+
+        const press = useCallback(
+          (k) => {
+            if (busy) return;
+            setErr(false);
+            if (k === "⌫") {
+              setPin((p) => p.slice(0, -1));
+            } else if (k === "→") {
+              if (pin.length >= 4) submit(pin);
+            } else if (pin.length < PIN_LEN) {
+              const next = pin + k;
+              setPin(next);
+              if (next.length === PIN_LEN) setTimeout(() => submit(next), 140);
+            }
+          },
+          [pin, busy, submit],
+        );
+
+        useEffect(() => {
+          const h = (e) => {
+            if (e.key >= "0" && e.key <= "9") press(e.key);
+            else if (e.key === "Backspace") press("⌫");
+            else if (e.key === "Enter") press("→");
+          };
+          window.addEventListener("keydown", h);
+          return () => window.removeEventListener("keydown", h);
+        }, [press]);
+
+        const PAD = [
+          ["1", "2", "3"],
+          ["4", "5", "6"],
+          ["7", "8", "9"],
+          ["⌫", "0", "→"],
+        ];
+
+        return (
+          <div className="screen">
+            <div ref={ref} className="g screen-card">
+              <span className="sc-icon">{mode === "unlock" ? "🔐" : "🔑"}</span>
+              <div className="sc-title">{TITLES[mode]}</div>
+              <div className="sc-sub">{SUBS[mode]}</div>
+
+              <div className="pin-dots">
+                {Array.from({ length: PIN_LEN }, (_, i) => (
+                  <div
+                    key={i}
+                    className={`dot ${i < pin.length ? "on" : ""} ${err ? "err" : ""}`}
+                  />
+                ))}
+              </div>
+
+              <div className="numpad">
+                {PAD.flat().map((k, i) => {
+                  const isSpc = k === "⌫" || k === "→";
+                  const isGo = k === "→" && pin.length >= 4;
+                  return (
+                    <button
+                      key={i}
+                      className={`nk ${isSpc ? "spc" : ""} ${isGo && !busy ? "go" : ""}`}
+                      disabled={busy || (k === "→" && pin.length < 4)}
+                      onClick={() => press(k)}
+                      onMouseMove={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect();
+                        e.currentTarget.style.setProperty(
+                          "--mx",
+                          `${((e.clientX - r.left) / r.width) * 100}%`,
+                        );
+                        e.currentTarget.style.setProperty(
+                          "--my",
+                          `${((e.clientY - r.top) / r.height) * 100}%`,
+                        );
+                      }}
+                    >
+                      {busy && k === "→" ? "…" : k}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {err && (
+                <div className="pin-error">
+                  {mode === "confirm"
+                    ? "✗ PINs do not match - try again."
+                    : "✗ Incorrect PIN - try again."}
+                </div>
+              )}
+              {mode === "unlock" && (
+                <button className="forgot-btn" onClick={onForgot}>
+                  Forgot PIN? Sign in again →
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      /* ─── Task Card ──────────────────────────────────────────── */
+      function TaskCard({ task, onMove, onAssign, onDelete, onEdit }) {
+        const ref = useRef();
+        useGlow(ref);
+        const [editing, setEdit] = useState(false);
+        const [txt, setTxt] = useState(task.text);
+        const [editingWho, setEditWho] = useState(false);
+        const [who, setWho] = useState(task.assignee);
+        const [dragging, setDragging] = useState(false);
+        const iref = useRef();
+        const wref = useRef();
+
+        const startEdit = () => {
+          setEdit(true);
+          setTimeout(() => iref.current?.focus(), 0);
+        };
+        const endEdit = () => {
+          setEdit(false);
+          const v = txt.trim();
+          if (v && v !== task.text) onEdit(task.id, v);
+          else setTxt(task.text);
+        };
+
+        const startWho = () => {
+          setWho(task.assignee);
+          setEditWho(true);
+          setTimeout(() => wref.current?.focus(), 0);
+        };
+        const endWho = () => {
+          setEditWho(false);
+          onAssign(task.id, who);
+        };
+
+        const back = Board.prev(task.status);
+        const fwd = Board.next(task.status);
+
+        return (
+          <div
+            ref={ref}
+            className={`g task ${dragging ? "dragging" : ""}`}
+            draggable={!editing && !editingWho}
+            onDragStart={(e) => {
+              e.dataTransfer.setData("text/plain", task.id);
+              e.dataTransfer.effectAllowed = "move";
+              setDragging(true);
+            }}
+            onDragEnd={() => setDragging(false)}
+          >
+            <div className="tbody" onDoubleClick={startEdit}>
+              {editing ? (
+                <input
+                  ref={iref}
+                  className="iedit"
+                  value={txt}
+                  onChange={(e) => setTxt(e.target.value)}
+                  onBlur={endEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") endEdit();
+                    if (e.key === "Escape") {
+                      setTxt(task.text);
+                      setEdit(false);
+                    }
+                  }}
+                />
+              ) : (
+                <div className="ttext">{task.text}</div>
+              )}
+              <div className="tmeta">
+                {editingWho ? (
+                  <input
+                    ref={wref}
+                    className="aedit"
+                    list="tk-people"
+                    placeholder="Assign to…"
+                    value={who}
+                    onChange={(e) => setWho(e.target.value)}
+                    onBlur={endWho}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") endWho();
+                      if (e.key === "Escape") {
+                        setWho(task.assignee);
+                        setEditWho(false);
+                      }
+                    }}
+                  />
+                ) : (
+                  <button
+                    className={`atag ${task.assignee ? "" : "none"}`}
+                    onClick={startWho}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    title="Change who this is assigned to"
+                  >
+                    {task.assignee || "Unassigned"}
+                  </button>
+                )}
+                {task.priority && (
+                  <span className={`ptag p-${task.priority}`}>
+                    {task.priority}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="tactions">
+              {back && (
+                <button
+                  className="tact mv"
+                  onClick={() => onMove(task.id, back)}
+                  title={`Move to ${Board.LABELS[back]}`}
+                >
+                  ←
+                </button>
+              )}
+              {fwd && (
+                <button
+                  className="tact mv"
+                  onClick={() => onMove(task.id, fwd)}
+                  title={`Move to ${Board.LABELS[fwd]}`}
+                >
+                  →
+                </button>
+              )}
+              <button
+                className="tact"
+                onClick={() => onDelete(task.id)}
+                title="Delete"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      /* ─── Column (drop target) ───────────────────────────────── */
+      function Column({ status, count, empty, onMove, children }) {
+        const [over, setOver] = useState(false);
+
+        return (
+          <section
+            className={`col ${over ? "over" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              setOver(true);
+            }}
+            onDragLeave={(e) => {
+              // dragleave also fires when the pointer crosses onto a card
+              // inside the column; only clear the highlight on leaving it.
+              if (!e.currentTarget.contains(e.relatedTarget)) setOver(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setOver(false);
+              onMove(e.dataTransfer.getData("text/plain"), status);
+            }}
+          >
+            <div className="colhead">
+              <span className={`coldot ${status}`} />
+              {Board.LABELS[status]}
+              <span className="colcount">{count}</span>
+            </div>
+            <div className="scroll colbody">
+              {count === 0 ? <div className="colempty">{empty}</div> : children}
+            </div>
+          </section>
+        );
+      }
+
+      /* ─── Add Task ───────────────────────────────────────────── */
+      function AddTask({ onAdd }) {
+        const ref = useRef();
+        useGlow(ref);
+        const [text, setText] = useState("");
+        const [prio, setPrio] = useState("");
+        const [who, setWho] = useState("");
+        const ta = useRef();
+
+        const submit = () => {
+          const t = text.trim();
+          if (!t) return;
+          onAdd({
+            id: uid(),
+            text: t,
+            priority: prio,
+            status: "assigned",
+            assignee: who.trim(),
+            createdAt: Date.now(),
+          });
+          setText("");
+          setPrio("");
+          setWho("");
+          ta.current?.focus();
+        };
+
+        return (
+          <div className="addarea">
+            <div ref={ref} className="g addform">
+              <div className="addinwrap">
+                <textarea
+                  ref={ta}
+                  className="addin"
+                  placeholder="Add a task… (Enter to save)"
+                  rows={1}
+                  value={text}
+                  onChange={(e) => {
+                    setText(e.target.value);
+                    e.target.style.height = "auto";
+                    e.target.style.height = e.target.scrollHeight + "px";
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      submit();
+                    }
+                  }}
+                />
+                {text.trim() && (
+                  <div className="addopts">
+                    <input
+                      className="aedit addwho"
+                      list="tk-people"
+                      placeholder="Assign to…"
+                      value={who}
+                      onChange={(e) => setWho(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          submit();
+                        }
+                      }}
+                    />
+                    {["high", "medium", "low"].map((p) => (
+                      <button
+                        key={p}
+                        className={`pbtn ${prio === p ? `on-${p}` : ""}`}
+                        onClick={() => setPrio((v) => (v === p ? "" : p))}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                className="addbtn"
+                onClick={submit}
+                disabled={!text.trim()}
+              >
+                +
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      /* ─── Glass Select (custom dropdown, portal-rendered) ───── */
+      function GlassSelect({ value, onChange, options }) {
+        const [open, setOpen] = useState(false);
+        const [pos, setPos] = useState({ top: 0, right: 0 });
+        const btnRef = useRef();
+
+        const toggle = () => {
+          if (!open) {
+            const r = btnRef.current.getBoundingClientRect();
+            setPos({
+              top: r.bottom + 6,
+              right: window.innerWidth - r.right,
+            });
+          }
+          setOpen((o) => !o);
+        };
+
+        // Close on outside click or scroll
+        useEffect(() => {
+          if (!open) return;
+          const close = () => setOpen(false);
+          document.addEventListener("mousedown", close);
+          document.addEventListener("scroll", close, true);
+          return () => {
+            document.removeEventListener("mousedown", close);
+            document.removeEventListener("scroll", close, true);
+          };
+        }, [open]);
+
+        const current = options.find((o) => o.value === value);
+
+        return (
+          <div
+            style={{ position: "relative", display: "inline-block" }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              ref={btnRef}
+              className={`glass-sel-btn ${open ? "open" : ""}`}
+              onClick={toggle}
+            >
+              {current?.label ?? "-"}
+              <span className="glass-sel-caret">▼</span>
+            </button>
+            {open &&
+              ReactDOM.createPortal(
+                <div
+                  className="g glass-sel-menu"
+                  style={{ top: pos.top, right: pos.right }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  {options.map((o) => (
+                    <button
+                      key={o.value}
+                      className={`glass-sel-opt ${o.value === value ? "sel-active" : ""}`}
+                      onClick={() => {
+                        onChange(o.value);
+                        setOpen(false);
+                      }}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>,
+                document.body,
+              )}
+          </div>
+        );
+      }
+
+      /* ─── Confirm Dialog Component ───────────────────────────── */
+      function ConfirmDialog({
+        title,
+        body,
+        confirmLabel = "Confirm",
+        danger = false,
+        onConfirm,
+        onCancel,
+      }) {
+        // Close on Escape key
+        useEffect(() => {
+          const h = (e) => {
+            if (e.key === "Escape") onCancel();
+          };
+          window.addEventListener("keydown", h);
+          return () => window.removeEventListener("keydown", h);
+        }, [onCancel]);
+
+        return ReactDOM.createPortal(
+          <div className="confirm-overlay" onClick={onCancel}>
+            <div
+              className="g confirm-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="confirm-title">{title}</div>
+              <div className="confirm-body">{body}</div>
+              <div className="confirm-btns">
+                <button className="btn btn-ghost" onClick={onCancel}>
+                  Cancel
+                </button>
+                <button
+                  className={`btn ${danger ? "btn-danger" : "btn-p"}`}
+                  onClick={onConfirm}
+                >
+                  {confirmLabel}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        );
+      }
+
+      /* ─── Settings Panel ─────────────────────────────────────── */
+      function Settings({ s, onUpdate, onChangePin, onClearData, onClose }) {
+        const ref = useRef();
+        useGlow(ref);
+
+        const TIMEOUTS = [
+          { l: "Never", v: 0 },
+          { l: "Immediately", v: -1 },
+          { l: "1 minute", v: 1 },
+          { l: "2 minutes", v: 2 },
+          { l: "5 minutes", v: 5 },
+          { l: "10 minutes", v: 10 },
+          { l: "30 minutes", v: 30 },
+        ];
+
+        return (
+          <div
+            className="soverlay"
+            onClick={(e) => e.target === e.currentTarget && onClose()}
+          >
+            <div ref={ref} className="g spanel">
+              <div className="stitle">
+                Settings
+                <button className="ibtn" onClick={onClose}>
+                  ✕
+                </button>
+              </div>
+
+              <div className="sgroup">
+                <div className="sglabel">Security</div>
+
+                <div className="srow">
+                  <div>
+                    <div className="srow-l">Auto-lock after idle</div>
+                    <div className="srow-d">
+                      Lock after this period of inactivity
+                    </div>
+                  </div>
+                  <GlassSelect
+                    value={s.idleTimeout}
+                    onChange={(v) => onUpdate({ ...s, idleTimeout: v })}
+                    options={TIMEOUTS.map((t) => ({ label: t.l, value: t.v }))}
+                  />
+                </div>
+
+                <div className="srow">
+                  <div>
+                    <div className="srow-l">Lock when tab hides</div>
+                    <div className="srow-d">
+                      Lock after switching away from this tab
+                    </div>
+                  </div>
+                  <GlassSelect
+                    value={s.lockOnHideDelay ?? 0}
+                    onChange={(v) => onUpdate({ ...s, lockOnHideDelay: v })}
+                    options={[
+                      { label: "Never", value: -1 },
+                      { label: "Immediately", value: 0 },
+                      { label: "30 seconds", value: 30 },
+                      { label: "1 minute", value: 60 },
+                      { label: "3 minutes", value: 180 },
+                      { label: "5 minutes", value: 300 },
+                      { label: "10 minutes", value: 600 },
+                    ]}
+                  />
+                </div>
+
+                <div className="srow clickable" onClick={onChangePin}>
+                  <div>
+                    <div className="srow-l">Change PIN</div>
+                    <div className="srow-d">Re-encrypt with a new PIN</div>
+                  </div>
+                  <span className="sarrow">→</span>
+                </div>
+              </div>
+
+              <div className="sgroup">
+                <div className="sglabel" style={{ color: "var(--red)" }}>
+                  Danger Zone
+                </div>
+                <div
+                  className="srow clickable"
+                  style={{ borderColor: "rgba(224,72,72,.28)" }}
+                  onClick={onClearData}
+                >
+                  <div>
+                    <div className="srow-l" style={{ color: "var(--red)" }}>
+                      Delete all data
+                    </div>
+                    <div className="srow-d">
+                      Permanently removes tasks from Drive
+                    </div>
+                  </div>
+                  <span>🗑</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      /* ═══════════════════════════════════════════════════════════
+   ROOT APP
+   ═══════════════════════════════════════════════════════════ */
+      function App() {
+        /* ── State ── */
+        const [phase, setPhase] = useState("loading");
+        // loading | config-error | auth | setup | confirm | unlock | ready
+        const [clientId, setClientId] = useState(null);
+        const [auth, setAuth] = useState(null);
+        const [key, setKey] = useState(null);
+        const [salt, setSalt] = useState(null);
+        const [fileId, setFileId] = useState(null);
+        const [tasks, setTasks] = useState([]);
+        const [setts, setSetts] = useState({
+          idleTimeout: 5,
+          lockOnHideDelay: 60, // -1=never, 0=immediately, N=seconds delay
+        });
+        const [toastList, setToasts] = useState([]);
+        const [saving, setSaving] = useState(false);
+        const [showSetts, setShowSetts] = useState(false);
+        const [showUserMenu, setShowUserMenu] = useState(false);
+        const [person, setPerson] = useState(Board.EVERYONE);
+        const [search, setSearch] = useState("");
+        const [setupPin, setSetupPin] = useState("");
+        const [confirmDlg, setConfirmDlg] = useState(null);
+
+        const idleRef = useRef(null);
+        const saveRef = useRef(null);
+        const searchRef = useRef(null);
+        const hideTimerRef = useRef(null);
+
+        /* ── Toast ── */
+        const toast = useCallback((msg, type = "info") => {
+          const id = uid();
+          setToasts((l) => [...l, { id, msg, type }]);
+          setTimeout(
+            () => setToasts((l) => l.filter((t) => t.id !== id)),
+            3000,
+          );
+        }, []);
+
+        /* ── Custom confirm (replaces native window.confirm) ── */
+        const showConfirm = useCallback(
+          ({ title, body, confirmLabel, danger }) =>
+            new Promise((resolve) => {
+              setConfirmDlg({ title, body, confirmLabel, danger, resolve });
+            }),
+          [],
+        );
+        const resolveConfirm = useCallback((result) => {
+          setConfirmDlg((d) => {
+            d?.resolve(result);
+            return null;
+          });
+        }, []);
+
+        /* ── Init: load config then restore session ── */
+        useEffect(() => {
+          (async () => {
+            // 1. Load client_id from the JSON file placed alongside index.html
+            let cid = null;
+            try {
+              const r = await fetch("./client_config.json");
+              if (r.ok) {
+                const cfg = await r.json();
+                cid = cfg?.web?.client_id || null;
+              }
+            } catch {}
+            setClientId(cid);
+
+            // 2. Restore cached Drive metadata
+            const cached = localStorage.getItem(META_KEY);
+            if (cached) {
+              try {
+                const m = JSON.parse(cached);
+                setSalt(m.salt);
+                setFileId(m.fileId);
+              } catch {}
+            }
+
+            // 3. Restore cached OAuth token if still valid
+            await new Promise((res) => setTimeout(res, 300)); // let GIS script load
+            const sa = localStorage.getItem("crys_auth");
+            if (sa) {
+              try {
+                const a = JSON.parse(sa);
+                if (a.expiresAt > Date.now() + 90_000) {
+                  setAuth(a);
+                  setPhase(cached ? "unlock" : "setup");
+                  return;
+                }
+              } catch {}
+            }
+            setPhase("auth");
+          })();
+        }, []);
+
+        /* ── Idle Lock ── */
+        const resetIdle = useCallback(() => {
+          clearTimeout(idleRef.current);
+          if (setts.idleTimeout === 0) return; // Never
+          // -1 = Immediately (~8 s grace so accidental blur doesn't lock)
+          const ms =
+            setts.idleTimeout === -1 ? 8_000 : setts.idleTimeout * 60_000;
+          idleRef.current = setTimeout(() => {
+            setPhase((p) => {
+              if (p === "ready") {
+                toast("Locked - idle timeout", "info");
+                return "unlock";
+              }
+              return p;
+            });
+          }, ms);
+        }, [setts.idleTimeout, toast]);
+
+        useEffect(() => {
+          if (phase !== "ready") return;
+          const evs = ["mousemove", "keydown", "mousedown", "touchstart"];
+          evs.forEach((e) =>
+            window.addEventListener(e, resetIdle, { passive: true }),
+          );
+          resetIdle();
+          return () => {
+            evs.forEach((e) => window.removeEventListener(e, resetIdle));
+            clearTimeout(idleRef.current);
+          };
+        }, [phase, resetIdle]);
+
+        /* ── Visibility Lock (with configurable delay) ── */
+        useEffect(() => {
+          const h = () => {
+            if (setts.lockOnHideDelay < 0) return; // "Never" selected
+            if (document.hidden) {
+              if (setts.lockOnHideDelay === 0) {
+                // Immediately
+                setPhase((p) => (p === "ready" ? "unlock" : p));
+              } else {
+                hideTimerRef.current = setTimeout(() => {
+                  setPhase((p) => (p === "ready" ? "unlock" : p));
+                }, setts.lockOnHideDelay * 1000);
+              }
+            } else {
+              // Tab became visible again - cancel any pending lock
+              clearTimeout(hideTimerRef.current);
+            }
+          };
+          document.addEventListener("visibilitychange", h);
+          return () => {
+            document.removeEventListener("visibilitychange", h);
+            clearTimeout(hideTimerRef.current);
+          };
+        }, [setts.lockOnHideDelay]);
+
+        /* ── Save to Drive (debounced) ── */
+
+        /* The arguments of the last save that failed, or null.
+           A failed save used to be a toast and nothing else: the edit existed
+           only in React state, was never written anywhere, and was gone when
+           the tab closed. Going offline for a moment while typing was enough
+           to lose work silently. Held here so it can be retried. */
+        const unsavedRef = useRef(null);
+
+        const persist = useCallback(
+          async (t, s, k, sa, fi, tok) => {
+            if (!k || !tok) return;
+            setSaving(true);
+            try {
+              const enc = await Crypt.enc({ tasks: t, settings: s }, k);
+              const payload = { v: 1, salt: sa, ...enc };
+              const res = await Drive.write(tok, payload, fi);
+              if (res.id && res.id !== fi) {
+                setFileId(res.id);
+                localStorage.setItem(
+                  META_KEY,
+                  JSON.stringify({ salt: sa, fileId: res.id }),
+                );
+              }
+              unsavedRef.current = null;
+            } catch (e) {
+              unsavedRef.current = [t, s, k, sa, fi, tok];
+              toast("Save failed: " + e.message, "error");
+            } finally {
+              setSaving(false);
+            }
+          },
+          [toast],
+        );
+
+        /* Retry a failed save when the connection comes back, or when the tab
+           is looked at again. Nothing here is user-visible unless it fails
+           again, in which case the same toast appears.
+
+           A later edit supersedes this: it schedules its own save with the
+           newer state, and that save clears unsavedRef on success. */
+        useEffect(() => {
+          const retry = () => {
+            const pending = unsavedRef.current;
+            if (!pending || !navigator.onLine) return;
+
+            unsavedRef.current = null;
+            persist(...pending);
+          };
+
+          window.addEventListener("online", retry);
+          document.addEventListener("visibilitychange", retry);
+
+          return () => {
+            window.removeEventListener("online", retry);
+            document.removeEventListener("visibilitychange", retry);
+          };
+        }, [persist]);
+
+        /* Warn before closing with an unwritten change. The browser shows its
+           own generic message; the string is ignored by every current browser
+           and is only there because the API requires returnValue to be set. */
+        useEffect(() => {
+          const warn = (e) => {
+            if (!unsavedRef.current) return;
+            e.preventDefault();
+            e.returnValue = "";
+          };
+
+          window.addEventListener("beforeunload", warn);
+          return () => window.removeEventListener("beforeunload", warn);
+        }, []);
+
+        const schedule = useCallback(
+          (t, s, k, sa, fi, tok) => {
+            clearTimeout(saveRef.current);
+            saveRef.current = setTimeout(
+              () => persist(t, s, k, sa, fi, tok),
+              1600,
+            );
+          },
+          [persist],
+        );
+
+        /* ── Google Auth callback ── */
+        const handleAuth = useCallback((a) => {
+          setAuth(a);
+          localStorage.setItem("crys_auth", JSON.stringify(a));
+          setPhase(localStorage.getItem(META_KEY) ? "unlock" : "setup");
+        }, []);
+
+        /* ── PIN Setup flow ── */
+        const handleSetup = useCallback(
+          async (pin) => {
+            if (!setupPin) {
+              // First pass - store and ask to confirm
+              setSetupPin(pin);
+              setPhase("confirm");
+              return true;
+            }
+            // Second pass - confirm
+            if (pin !== setupPin) {
+              setSetupPin("");
+              setPhase("setup");
+              return false;
+            }
+
+            // Derive, encrypt, store
+            try {
+              const { key: k, salt: sa } = await Crypt.derive(pin);
+              const isChanging = !!fileId;
+              const data = {
+                tasks: isChanging ? tasks : [],
+                settings: isChanging
+                  ? setts
+                  : { idleTimeout: 5, lockOnHideDelay: 0 },
+              };
+              const enc = await Crypt.enc(data, k);
+              const res = await Drive.write(
+                auth.token,
+                { v: 1, salt: sa, ...enc },
+                isChanging ? fileId : null,
+              );
+              const fid = res.id || fileId;
+
+              setKey(k);
+              setSalt(sa);
+              setFileId(fid);
+              localStorage.setItem(
+                META_KEY,
+                JSON.stringify({ salt: sa, fileId: fid }),
+              );
+              if (!isChanging) {
+                setTasks([]);
+                setSetts({ idleTimeout: 5, lockOnHide: true });
+              }
+              setSetupPin("");
+              setPhase("ready");
+              toast("PIN set - tasks encrypted 🔐", "success");
+              return true;
+            } catch (e) {
+              toast(e.message, "error");
+              setSetupPin("");
+              setPhase("setup");
+              return false;
+            }
+          },
+          [setupPin, auth, fileId, tasks, setts, toast],
+        );
+
+        /* ── PIN Unlock flow ── */
+        const handleUnlock = useCallback(
+          async (pin) => {
+            if (!auth) return false;
+            try {
+              let sa = salt,
+                fi = fileId,
+                raw = null;
+
+              if (!sa || !fi) {
+                const f = await Drive.find(auth.token);
+                if (!f) {
+                  setPhase("setup");
+                  return true;
+                }
+                fi = f.id;
+                raw = await Drive.read(auth.token, fi);
+                sa = raw.salt;
+                setSalt(sa);
+                setFileId(fi);
+                localStorage.setItem(
+                  META_KEY,
+                  JSON.stringify({ salt: sa, fileId: fi }),
+                );
+              } else {
+                raw = await Drive.read(auth.token, fi);
+              }
+
+              const { key: k } = await Crypt.derive(pin, sa);
+              try {
+                const d = await Crypt.dec({ iv: raw.iv, ct: raw.ct }, k);
+                setTasks((d.tasks || []).map(Board.normalize));
+                if (d.settings) {
+                  // Migrate old lockOnHide boolean → lockOnHideDelay number
+                  const s = d.settings;
+                  if (
+                    s.lockOnHide !== undefined &&
+                    s.lockOnHideDelay === undefined
+                  ) {
+                    s.lockOnHideDelay = s.lockOnHide ? 0 : -1;
+                    delete s.lockOnHide;
+                  }
+                  setSetts(s);
+                }
+                setKey(k);
+                setPhase("ready");
+                return true;
+              } catch {
+                return false;
+              }
+            } catch (e) {
+              toast(e.message, "error");
+              return false;
+            }
+          },
+          [auth, salt, fileId, toast],
+        );
+
+        /* ── Forgot PIN ── */
+        const handleForgot = useCallback(() => {
+          localStorage.clear();
+          setSalt(null);
+          setFileId(null);
+          setAuth(null);
+          setKey(null);
+          setTasks([]);
+          setPhase("auth");
+          toast("Signed out. Sign in and set a new PIN.", "info");
+        }, [toast]);
+
+        /* ── Tasks CRUD ── */
+        // The Board functions return the same list when nothing changed (a
+        // card dropped back on its own column), and that skips the save.
+        const commit = useCallback(
+          (t) => {
+            if (t === tasks) return;
+            setTasks(t);
+            schedule(t, setts, key, salt, fileId, auth?.token);
+          },
+          [tasks, setts, key, salt, fileId, auth, schedule],
+        );
+
+        const addTask = useCallback(
+          (task) => commit([task, ...tasks]),
+          [tasks, commit],
+        );
+
+        const moveTask = useCallback(
+          (id, status) => commit(Board.move(tasks, id, status)),
+          [tasks, commit],
+        );
+
+        const assignTask = useCallback(
+          (id, name) => commit(Board.assign(tasks, id, name)),
+          [tasks, commit],
+        );
+
+        const deleteTask = useCallback(
+          (id) => {
+            commit(tasks.filter((x) => x.id !== id));
+            toast("Deleted", "info");
+          },
+          [tasks, commit, toast],
+        );
+
+        const editTask = useCallback(
+          (id, text) =>
+            commit(tasks.map((x) => (x.id === id ? { ...x, text } : x))),
+          [tasks, commit],
+        );
+
+        const clearSubmitted = useCallback(async () => {
+          const n = tasks.filter((x) => x.status === "submitted").length;
+          // Submitted cards are the record of who did what, so unlike the
+          // list's "Clear done" this asks first.
+          const ok = await showConfirm({
+            title: "Clear submitted tasks?",
+            body: `This permanently removes ${n} submitted task${n === 1 ? "" : "s"}. There is no way to undo this.`,
+            confirmLabel: "Clear",
+            danger: true,
+          });
+          if (!ok) return;
+          commit(tasks.filter((x) => x.status !== "submitted"));
+          toast("Cleared submitted tasks", "info");
+        }, [tasks, commit, showConfirm, toast]);
+
+        /* ── Settings update ── */
+        const updateSetts = useCallback(
+          (ns) => {
+            setSetts(ns);
+            clearTimeout(saveRef.current);
+            persist(tasks, ns, key, salt, fileId, auth?.token);
+          },
+          [tasks, key, salt, fileId, auth, persist],
+        );
+
+        /* ── Sign out ── */
+        const signOut = useCallback(async () => {
+          setShowUserMenu(false);
+          setShowSetts(false);
+          const ok = await showConfirm({
+            title: "Sign out?",
+            body: "You'll need to sign in again to access your tasks.",
+            confirmLabel: "Sign out",
+          });
+          if (!ok) return;
+          localStorage.removeItem("crys_auth");
+          setAuth(null);
+          setKey(null);
+          setTasks([]);
+          setPhase("auth");
+        }, [showConfirm]);
+
+        /* ── Clear data ── */
+        const clearData = useCallback(async () => {
+          setShowSetts(false);
+          const ok = await showConfirm({
+            title: "Delete all data?",
+            body: "This permanently removes your tasks from Google Drive. There is no way to undo this.",
+            confirmLabel: "Delete",
+            danger: true,
+          });
+          if (!ok) return;
+          try {
+            if (fileId && auth?.token) await Drive.remove(auth.token, fileId);
+            localStorage.removeItem(META_KEY);
+            setSalt(null);
+            setFileId(null);
+            setTasks([]);
+            setShowSetts(false);
+            setPhase("setup");
+            toast("All data deleted", "info");
+          } catch (e) {
+            toast(e.message, "error");
+          }
+        }, [fileId, auth, toast, showConfirm]);
+
+        /* ── Change PIN ── */
+        const changePinStart = useCallback(() => {
+          setShowSetts(false);
+          setSetupPin("");
+          setPhase("setup");
+        }, []);
+
+        /* ── Board: filtered columns, people, progress ── */
+        const people = useMemo(() => Board.people(tasks), [tasks]);
+        const activePerson = Board.resolvePerson(person, tasks);
+        const cols = useMemo(
+          () => Board.columns(tasks, { search, person: activePerson }),
+          [tasks, search, activePerson],
+        );
+        const prog = Board.progress(tasks);
+        const filtering = !!search.trim() || activePerson !== Board.EVERYONE;
+        const hasUnassigned = tasks.some((t) => !t.assignee);
+        const isPerson = (p) =>
+          typeof activePerson === "string" &&
+          activePerson.toLowerCase() === p.toLowerCase();
+
+        /* ── Render phases ── */
+        if (phase === "loading") return <LoadingScreen />;
+        if (phase === "auth")
+          return (
+            <>
+              <Background />
+              <AuthScreen onAuth={handleAuth} clientId={clientId} />
+              <Toasts list={toastList} />
+            </>
+          );
+        if (phase === "setup" || phase === "confirm")
+          return (
+            <>
+              <Background />
+              <PinScreen
+                key={phase}
+                mode={phase === "confirm" ? "confirm" : "setup"}
+                onSubmit={handleSetup}
+              />
+              <Toasts list={toastList} />
+            </>
+          );
+        if (phase === "unlock")
+          return (
+            <>
+              <Background />
+              <PinScreen
+                mode="unlock"
+                onSubmit={handleUnlock}
+                onForgot={handleForgot}
+              />
+              <Toasts list={toastList} />
+            </>
+          );
+
+        /* ── Main App ── */
+        return (
+          <>
+            <Background />
+            <div className="layout">
+              {/* Header - transparent glass, 3-column layout */}
+              <Glass className="header bare">
+                {/* Left: logo */}
+                <div className="logo">
+                  <img
+                    src="icon-192.png"
+                    alt=""
+                    className="logo-icon"
+                    onError={(e) => {
+                      e.target.outerHTML = '<span class="logo-star">✦</span>';
+                    }}
+                  />
+                  Translucent <em>Kanban</em>
+                </div>
+
+                {/* Centre: inline search */}
+                <div
+                  className="hsearch"
+                  onClick={() => searchRef.current?.focus()}
+                >
+                  <span className="hsi">◎</span>
+                  <input
+                    ref={searchRef}
+                    className="hsinput"
+                    placeholder="Search tasks…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  {search && (
+                    <button className="hsclear" onClick={() => setSearch("")}>
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Right: saving badge + avatar dropdown */}
+                <div className="hactions">
+                  {saving && <span className="saving-badge">saving</span>}
+                  <div className="umenu-wrap">
+                    <div
+                      className="avatar"
+                      onClick={() => setShowUserMenu((m) => !m)}
+                    >
+                      {auth?.user?.picture ? (
+                        <img src={auth.user.picture} alt={auth.user.name} />
+                      ) : (
+                        auth?.user?.name?.[0] || "?"
+                      )}
+                    </div>
+                    {showUserMenu &&
+                      ReactDOM.createPortal(
+                        <>
+                          <div
+                            style={{ position: "fixed", inset: 0, zIndex: 24 }}
+                            onClick={() => setShowUserMenu(false)}
+                          />
+                          <div className="g umenu">
+                            <div className="umenu-user">
+                              <div className="umenu-avatar">
+                                {auth?.user?.picture ? (
+                                  <img
+                                    src={auth.user.picture}
+                                    alt={auth.user.name}
+                                  />
+                                ) : (
+                                  auth?.user?.name?.[0] || "?"
+                                )}
+                              </div>
+                              <div>
+                                <div className="umenu-name">
+                                  {auth?.user?.name || "User"}
+                                </div>
+                                <div className="umenu-email">
+                                  {auth?.user?.email || ""}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="umenu-sep" />
+
+                            <a
+                              className="umenu-item"
+                              href="https://drive.google.com/drive/my-drive"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() => setShowUserMenu(false)}
+                            >
+                              <span className="umenu-icon">⬡</span> Open Google
+                              Drive
+                            </a>
+                            <button
+                              className="umenu-item"
+                              onClick={() => {
+                                setShowUserMenu(false);
+                                setShowSetts(true);
+                              }}
+                            >
+                              <span className="umenu-icon">⚙</span> Settings
+                            </button>
+
+                            <div className="umenu-sep" />
+
+                            <button
+                              className="umenu-item"
+                              onClick={() => {
+                                setShowUserMenu(false);
+                                setShowSetts(false);
+                                setPhase("unlock");
+                              }}
+                            >
+                              <span className="umenu-icon">{"🔒\uFE0E"}</span>{" "}
+                              Lock app
+                            </button>
+                            <button
+                              className="umenu-item danger"
+                              onClick={() => {
+                                setShowUserMenu(false);
+                                signOut();
+                              }}
+                            >
+                              <span className="umenu-icon">→</span> Sign out
+                            </button>
+                          </div>
+                        </>,
+                        document.body,
+                      )}
+                  </div>
+                </div>
+              </Glass>
+
+              {/* Standalone search removed - now inside header */}
+
+              {/* Stats */}
+              {prog.total > 0 && (
+                <Glass className="statsbar bare" style={{ margin: "0 0 8px" }}>
+                  <div className="stat">
+                    <strong>{prog.submitted}</strong>/{prog.total} submitted
+                  </div>
+                  <div className="progbar">
+                    <div
+                      className="progfill"
+                      style={{ width: `${prog.pct}%` }}
+                    />
+                  </div>
+                  <div className="stat">
+                    <strong>{prog.pct}%</strong>
+                  </div>
+                </Glass>
+              )}
+
+              {/* Filter by person */}
+              {(people.length > 0 || prog.submitted > 0) && (
+                <div className="ftabs">
+                  {people.length > 0 && (
+                    <>
+                      <button
+                        className={`ftab ${activePerson === Board.EVERYONE ? "on" : ""}`}
+                        onClick={() => setPerson(Board.EVERYONE)}
+                      >
+                        Everyone
+                      </button>
+                      {people.map((p) => (
+                        <button
+                          key={p}
+                          className={`ftab ${isPerson(p) ? "on" : ""}`}
+                          onClick={() => setPerson(p)}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                      {hasUnassigned && (
+                        <button
+                          className={`ftab ${activePerson === Board.UNASSIGNED ? "on" : ""}`}
+                          onClick={() => setPerson(Board.UNASSIGNED)}
+                        >
+                          Unassigned
+                        </button>
+                      )}
+                    </>
+                  )}
+                  {prog.submitted > 0 && (
+                    <button className="ftab del" onClick={clearSubmitted}>
+                      Clear submitted
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Board */}
+              <div className="board">
+                {Board.STATUSES.map((status) => (
+                  <Column
+                    key={status}
+                    status={status}
+                    count={cols[status].length}
+                    empty={
+                      filtering
+                        ? "No matching tasks"
+                        : status === "assigned" && prog.total === 0
+                          ? "Add a task below to start"
+                          : "Nothing here yet"
+                    }
+                    onMove={moveTask}
+                  >
+                    {cols[status].map((t) => (
+                      <TaskCard
+                        key={t.id}
+                        task={t}
+                        onMove={moveTask}
+                        onAssign={assignTask}
+                        onDelete={deleteTask}
+                        onEdit={editTask}
+                      />
+                    ))}
+                  </Column>
+                ))}
+              </div>
+
+              {/* Suggestions for every "Assign to…" box */}
+              <datalist id="tk-people">
+                {people.map((p) => (
+                  <option key={p} value={p} />
+                ))}
+              </datalist>
+
+              {/* Add */}
+              <AddTask onAdd={addTask} />
+            </div>
+
+            {/* Settings Sheet */}
+            {showSetts && (
+              <Settings
+                s={setts}
+                onUpdate={updateSetts}
+                onChangePin={changePinStart}
+                onClearData={clearData}
+                onClose={() => setShowSetts(false)}
+              />
+            )}
+
+            {/* Custom confirm dialog */}
+            {confirmDlg && (
+              <ConfirmDialog
+                title={confirmDlg.title}
+                body={confirmDlg.body}
+                confirmLabel={confirmDlg.confirmLabel}
+                danger={confirmDlg.danger}
+                onConfirm={() => resolveConfirm(true)}
+                onCancel={() => resolveConfirm(false)}
+              />
+            )}
+
+            <Toasts list={toastList} />
+          </>
+        );
+      }
+
+      /* ── Mount ── */
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+      /* ── Service Worker ── */
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("./sw.js").catch(() => {});
+        });
+      }
+    </script>
+  </body>
+</html>

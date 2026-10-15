@@ -1,0 +1,6 @@
+{
+  "web": {
+    "client_id": "",
+    "javascript_origins": ["http://localhost:8080"]
+  }
+}

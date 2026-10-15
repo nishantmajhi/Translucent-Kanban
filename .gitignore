@@ -1,0 +1,18 @@
+# The OAuth config you download from the Google Cloud Console. It is fetched by
+# the browser at startup for its client_id, and it also contains a client_secret
+# that nothing here uses — see SECRETS-TODO.md. Copy client_config.example.json
+# to client_config.json and fill in your own client_id.
+client_config.json
+
+# Anything else that looks like a secret. Git on Windows matches these without
+# regard to case, so the notes file has to be excepted explicitly.
+*secret*
+!SECRETS-TODO.md
+.env
+.env.*
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
